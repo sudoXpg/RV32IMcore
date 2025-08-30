@@ -12,6 +12,7 @@ module SOC(
     Clockworks #(.SLOW(15)) CW (CLK, RESET, clk, resetn);
 // --
 
+    reg [4:0] leds = 0;
 
     reg [31:0] PC = 0;
     reg [31:0] MEM [0:255];
@@ -24,8 +25,8 @@ module SOC(
     wire [31:0] write_back_data;
     wire        write_back_enable;
 
-    assign write_back_data    = 0;
-    assign write_back_enable  = 0;
+    assign write_back_data    = aluOut;
+    assign write_back_enable  = (state == EXECUTE && (isALUreg || isALUimm));
 
 
 
@@ -46,37 +47,31 @@ module SOC(
     end
 // --
 
+// -- ALU registers/nets
+   wire [31:0] aluIn1 = rs1;
+   wire [31:0] aluIn2 = isALUreg ? rs2 : Iimm;
+   reg  [31:0] aluOut;
+   wire [4:0]  shamt =  isALUreg ? rs2[4:0] : instr[24:20]; // shift amount
+// --
+
 // -- ROM content
+`include "rv_asm.v"
+   
     initial begin
         PC = 0;
-        // add x0, x0, x0
-        //                   rs2   rs1  add  rd   ALUREG
-        instr = 32'b0000000_00000_00000_000_00000_0110011;
-        // add x1, x0, x0
-        //                    rs2   rs1  add  rd  ALUREG
-        MEM[0] = 32'b0000000_00000_00000_000_00001_0110011;
-        // addi x1, x1, 1
-        //             imm         rs1  add  rd   ALUIMM
-        MEM[1] = 32'b000000000001_00001_000_00001_0010011;
-        // addi x1, x1, 1
-        //             imm         rs1  add  rd   ALUIMM
-        MEM[2] = 32'b000000000001_00001_000_00001_0010011;
-        // addi x1, x1, 1
-        //             imm         rs1  add  rd   ALUIMM
-        MEM[3] = 32'b000000000001_00001_000_00001_0010011;
-        // addi x1, x1, 1
-        //             imm         rs1  add  rd   ALUIMM
-        MEM[4] = 32'b000000000001_00001_000_00001_0010011;
-        // lw x2,0(x1)
-        //             imm         rs1   w   rd   LOAD
-        MEM[5] = 32'b000000000000_00001_010_00010_0000011;
-        // sw x2,0(x1)
-        //             imm   rs2   rs1   w   imm  STORE
-        MEM[6] = 32'b000000_00010_00001_010_00000_0100011;
-
-        // ebreak
-        //                                        SYSTEM
-        MEM[7] = 32'b000000000001_00000_000_00000_1110011;
+        ADD(x0,x0,x0);
+        ADD(x1,x0,x0);
+        ADDI(x1,x1,1);
+        ADDI(x1,x1,1);
+        ADDI(x1,x1,1);
+        ADDI(x1,x1,1);
+        ADD(x2,x1,x0);
+        ADD(x3,x1,x2);
+        SRLI(x3,x3,3);
+        SLLI(x3,x3,31);
+        SRAI(x3,x3,5);
+        SRLI(x1,x3,26);
+        EBREAK();
     end
 // -- 
 
@@ -109,6 +104,20 @@ module SOC(
     wire [2:0] funct3 = instr[14:12];
     wire [6:0] funct7 = instr[31:25];
 
+// -- ALU
+    always @(*) begin
+        case(funct3)
+	        3'b000: aluOut = (funct7[5] & instr[5]) ? (aluIn1 - aluIn2) : (aluIn1 + aluIn2);
+	        3'b001: aluOut = aluIn1 << shamt;
+	        3'b010: aluOut = ($signed(aluIn1) < $signed(aluIn2));
+	        3'b011: aluOut = (aluIn1 < aluIn2);
+	        3'b100: aluOut = (aluIn1 ^ aluIn2);
+	        3'b101: aluOut = funct7[5]? ($signed(aluIn1) >>> shamt) : ($signed(aluIn1) >> shamt); 
+	        3'b110: aluOut = (aluIn1 | aluIn2);
+	        3'b111: aluOut = (aluIn1 & aluIn2);	
+        endcase
+    end
+// --
 
     always @(posedge clk ) begin
 
@@ -121,6 +130,10 @@ module SOC(
         else begin
             if(write_back_enable && rdId != 0) begin
                 reg_bank[rdId] <= write_back_data;
+                // For displaying what happens.
+	            if(rdId == 1) begin
+	            leds <= write_back_data;
+	    end
             end
         end
 
@@ -150,13 +163,13 @@ module SOC(
 
     end
 
+    assign LEDS = leds;
     assign TXD = 0;
-    assign LEDS = isSYSTEM ? 31 : (1 << state);
-
 
 
 // -- verbosity
     always @(posedge clk) begin
+        $display("x%0d <= %b",rdId,write_back_data);
         if(state == FETCHreg) begin
 	        case (1'b1)
 	        isALUreg: $display(
