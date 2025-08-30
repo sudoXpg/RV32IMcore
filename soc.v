@@ -18,8 +18,24 @@ module SOC(
     reg [31:0] instr;
 
 
-    reg [31:0] reg_bank[0:31];
+    reg [31:0]  reg_bank[0:31];
+    reg [31:0]  rs1;
+    reg [31:0]  rs2;
+    wire [31:0] write_back_data;
+    wire        write_back_enable;
 
+    assign write_back_data    = 0;
+    assign write_back_enable  = 0;
+
+
+
+// -- state machine parameters
+    localparam FETCHinstr  = 3'b000;
+    localparam FETCHreg    = 3'b001;
+    localparam EXECUTE     = 3'b010;
+
+    reg [2:0] state = FETCHinstr;
+// --
 
 // -- cleaning registers
     integer i;
@@ -98,45 +114,73 @@ module SOC(
 
         if(!resetn) begin
             PC <= 0;
+            state <= FETCHinstr;
             instr <=  32'b0000000_00000_00000_000_00000_0110011; // NOP
         end
         
-        else if(!isSYSTEM) begin
-            instr <= MEM[PC];
-            PC <= PC + 1;
+        else begin
+            if(write_back_enable && rdId != 0) begin
+                reg_bank[rdId] <= write_back_data;
+            end
         end
 
-        else if(isSYSTEM)
+        case(state)
+            FETCHinstr: begin
+                instr <= MEM[PC];
+                state <= FETCHreg;
+            end
+
+            FETCHreg: begin
+                rs1 <= reg_bank[rs1Id];
+                rs2 <= reg_bank[rs2Id];
+                state <= EXECUTE;
+            end
+
+            EXECUTE: begin
+                if(!isSYSTEM) begin
+                    PC <= PC + 1;
+                    state <= FETCHinstr;
+                end
+            end
+        endcase
+
+        if(isSYSTEM)
             $finish();
+
+
     end
 
     assign TXD = 0;
-    assign LEDS = isSYSTEM ? 31 : {PC[0],isALUreg,isALUimm,isStore,isLoad};
-
+    assign LEDS = isSYSTEM ? 31 : (1 << state);
 
 
 
 // -- verbosity
     always @(posedge clk) begin
-        $display("PC=%0d",PC);
-        case (1'b1)
-	    isALUreg: $display(
-	        "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
-            rdId, rs1Id, rs2Id, funct3
-        );
-	    isALUimm: $display(
-	        "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
-            rdId, rs1Id, Iimm, funct3
-        );
-	    isBranch: $display("BRANCH");
-	    isJAL:    $display("JAL");
-	    isJALR:   $display("JALR");
-	    isAUIPC:  $display("AUIPC");
-	    isLUI:    $display("LUI");	
-	    isLoad:   $display("LOAD");
-	    isStore:  $display("STORE");
-	    isSYSTEM: $display("SYSTEM");
-        endcase 
+        if(state == FETCHreg) begin
+	        case (1'b1)
+	        isALUreg: $display(
+		    	      "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
+		    	      rdId, rs1Id, rs2Id, funct3
+		    	      );
+	        isALUimm: $display(
+		    	      "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
+		    	      rdId, rs1Id, Iimm, funct3
+		    	      );
+	        isBranch: $display("BRANCH");
+	        isJAL:    $display("JAL");
+	        isJALR:   $display("JALR");
+	        isAUIPC:  $display("AUIPC");
+	        isLUI:    $display("LUI");	
+	        isLoad:   $display("LOAD");
+	        isStore:  $display("STORE");
+	        isSYSTEM: $display("SYSTEM");
+	        endcase 
+    
+            if(isSYSTEM) begin
+	            $finish();
+	        end
+        end 
    end
 // --
 
