@@ -25,8 +25,11 @@ module SOC(
     wire [31:0] write_back_data;
     wire        write_back_enable;
 
-    assign write_back_data    = aluOut;
-    assign write_back_enable  = (state == EXECUTE && (isALUreg || isALUimm));
+    assign write_back_data    = (isJAL || isJALR)? (PC+4) : aluOut;
+    assign write_back_enable  = (state == EXECUTE && 
+                                (isALUreg || isALUimm || isJAL || isJALR));
+
+    wire [31:0] next_PC = isJAL ? PC+Iimm : isJALR ? rs1 + Iimm : PC + 4;
 
 
 
@@ -57,21 +60,14 @@ module SOC(
 // -- ROM content
 `include "rv_asm.v"
    
+    integer L0_=4;
     initial begin
-        PC = 0;
-        ADD(x0,x0,x0);
-        ADD(x1,x0,x0);
-        ADDI(x1,x1,1);
-        ADDI(x1,x1,1);
-        ADDI(x1,x1,1);
-        ADDI(x1,x1,1);
-        ADD(x2,x1,x0);
-        ADD(x3,x1,x2);
-        SRLI(x3,x3,3);
-        SLLI(x3,x3,31);
-        SRAI(x3,x3,5);
-        SRLI(x1,x3,26);
-        EBREAK();
+	    ADD(x1,x0,x0);
+        Label(L0_);
+	    ADDI(x1,x1,1);
+	    JAL(x0,LabelRef(L0_));
+	    EBREAK();
+	    endASM();
     end
 // -- 
 
@@ -139,7 +135,7 @@ module SOC(
 
         case(state)
             FETCHinstr: begin
-                instr <= MEM[PC];
+                instr <= MEM[PC[31:2]];
                 state <= FETCHreg;
             end
 
@@ -151,7 +147,7 @@ module SOC(
 
             EXECUTE: begin
                 if(!isSYSTEM) begin
-                    PC <= PC + 1;
+                    PC <= next_PC;
                     state <= FETCHinstr;
                 end
             end
