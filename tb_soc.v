@@ -20,6 +20,6 @@ module bench();
 
     initial begin
         CLK = 0;
-        $monitor("LEDS = %b", LEDS);
+        $monitor("LEDS = %x", LEDS);
     end
 endmodule
